@@ -1,0 +1,77 @@
+spring:
+  datasource:
+    url: jdbc:postgresql://localhost:5432/authdb
+    username: user
+    password: password
+    driver-class-name: org.postgresql.Driver
+  jpa:
+    hibernate:
+      ddl-auto: update
+    show-sql: true
+    properties:
+      hibernate:
+        dialect: org.hibernate.dialect.PostgreSQLDialect
+        format_sql: true
+
+# Flyway configuration
+  flyway:
+    recreate-db: true 
+
+logging:
+  level:
+    org.springframework.security: DEBUG # General Spring Security
+    org.springframework.security.oauth2.server.resource: TRACE # Detailed JWT validation/resource server processing
+    org.springframework.security.web.access.intercept: DEBUG # Authorization decisions
+    org.hibernate.SQL: DEBUG # Optional: Log SQL
+    org.hibernate.type.descriptor.sql.BasicBinder: TRACE # Optional: Log SQL parameters
+
+app:
+  security:
+    oauth2:
+      default-client:
+        client-id: default-client
+        client-secret: secret
+        redirect-uris:
+          - http://127.0.0.1:8080/login/oauth2/code/default-client
+          - http://localhost:5173/callback
+        scopes:
+          - openid
+          - profile
+          - message.read
+          - message.write
+        require-consent: true 
+
+bucket4j:
+  enabled: true
+  filters:
+    # Rate limit for token endpoint
+    - id: token-limit
+      url: /oauth2/token.*
+      strategy: first
+      http-response-status-code: 429
+      rate-limits:
+        - cache-name: buckets
+          execution-strategy: sync
+          expression: "getRemoteAddr()"
+          bandwidths:
+            - capacity: 10
+              time: 1
+              unit: minutes
+              fixed-refill-interval: 10
+              fixed-refill-interval-unit: seconds
+
+    # Rate limit for authorize endpoint (especially for prompt=none)
+    - id: authorize-limit
+      url: /oauth2/authorize.*
+      strategy: first
+      http-response-status-code: 429
+      rate-limits:
+        - cache-name: buckets
+          execution-strategy: sync
+          expression: "getRemoteAddr()"
+          bandwidths:
+            - capacity: 30 # Allow a bit more for authorize endpoint
+              time: 1
+              unit: minutes
+              fixed-refill-interval: 10
+              fixed-refill-interval-unit: seconds

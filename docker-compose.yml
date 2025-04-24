@@ -1,0 +1,45 @@
+services:
+  postgres:
+    image: postgres:latest
+    container_name: postgres_dev
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB}
+      POSTGRES_USER: ${POSTGRES_USER}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+    ports:
+      - "${POSTGRES_PORT}:5432"
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER} -d ${POSTGRES_DB}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  grafana:
+    image: grafana/grafana:latest
+    container_name: grafana_dev
+    restart: unless-stopped
+    environment:
+      GF_DATABASE_TYPE: postgres
+      GF_DATABASE_HOST: postgres:5432 # Use service name 'postgres'
+      GF_DATABASE_NAME: ${GRAFANA_DB}
+      GF_DATABASE_USER: ${GRAFANA_USER}
+      GF_DATABASE_PASSWORD: ${GRAFANA_PASSWORD}
+      GF_DATABASE_SSL_MODE: disable
+      GF_AUTH_ANONYMOUS_ENABLED: "true" # Optional: Allow anonymous access for ease of dev
+      GF_AUTH_ANONYMOUS_ORG_ROLE: Admin # Optional: Grant admin to anonymous
+    ports:
+      - "${GRAFANA_PORT}:3000"
+    volumes:
+      - grafana-data:/var/lib/grafana
+    depends_on:
+      postgres:
+        condition: service_healthy # Wait for postgres to be ready
+
+volumes:
+  postgres-data:
+    driver: local
+  grafana-data:
+    driver: local 
