@@ -3,7 +3,7 @@ import Home from '../components/Home.vue';
 import Callback from '../components/Callback.vue';
 import Secured from '../views/Secured.vue';
 import Login from '../views/Login.vue';
-import { isAuthenticated, isLoading } from '../auth'; // Removed initializeAuth import, not needed here
+import { isAuthenticated, authReady } from '../auth';
 
 /**
  * Defines the application routes.
@@ -46,34 +46,38 @@ const router = createRouter({
 
 /**
  * Navigation guard to protect routes requiring authentication.
- * It checks the authentication status before allowing access to protected routes.
- * If auth is loading, it waits. If not authenticated, it redirects to Login.
+ * It waits for auth initialization, then checks status before allowing access.
+ * If not authenticated for a protected route, it redirects to Login.
  * If authenticated, it redirects away from Login.
  * @param {import('vue-router').RouteLocationNormalized} to - The target route object.
  * @param {import('vue-router').RouteLocationNormalized} from - The current route object being navigated away from.
  * @param {import('vue-router').NavigationGuardNext} next - Function to resolve the navigation hook.
  */
 router.beforeEach(async (to, from, next) => {
-  // Ensure auth is initialized before checking requiresAuth
-  // This prevents race conditions on initial load or page refresh
-  while (isLoading.value) {
-    console.log('Router guard waiting for auth init...');
-    await new Promise(resolve => setTimeout(resolve, 50));
-  }
+  // Wait for the initial auth check to complete before evaluating the route
+  await authReady;
+  console.log('Auth is ready, proceeding with route guard check.');
 
-  const requiresAuth = to.matched.some(record => record.meta.requiresAuth);
-  const authed = isAuthenticated.value;
+  try {
+    const requiresAuth = to.matched.some(record => record.meta.requiresAuth);
+    const authed = isAuthenticated.value;
 
-  console.log(`Routing to: ${to.path}, requiresAuth: ${requiresAuth}, isAuthenticated: ${authed}`);
+    console.log(`Routing to: ${to.path}, requiresAuth: ${requiresAuth}, isAuthenticated: ${authed}`);
 
-  if (requiresAuth && !authed) {
-    console.log('Redirecting to Login because route requires auth and user is not authenticated.');
+    if (requiresAuth && !authed) {
+      console.log('Redirecting to Login because route requires auth and user is not authenticated.');
+      // Pass the intended destination as a query parameter for redirection after login
+      next({ name: 'Login', query: { redirect: to.fullPath } });
+    } else if (to.name === 'Login' && authed) {
+      console.log('Redirecting to Home because user is already authenticated and tried to access Login.');
+      next({ name: 'Home' });
+    } else {
+      next();
+    }
+  } catch (error) {
+    console.error('Error in navigation guard logic:', error);
+    // Fallback: Redirect to login page in case of unexpected errors in the guard
     next({ name: 'Login' });
-  } else if (to.name === 'Login' && authed) {
-    console.log('Redirecting to Home because user is already authenticated and tried to access Login.');
-    next({ name: 'Home' });
-  } else {
-    next();
   }
 });
 

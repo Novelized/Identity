@@ -19,7 +19,8 @@ export const getMessages = async () => {
     throw new Error('No access token available. Please log in.');
   }
 
-  console.log('[ApiService] Attempting to fetch /messages with token:', token);
+  // Redact token from log
+  console.log('[ApiService] Attempting to fetch /messages'); // token redacted
 
   try {
     const response = await fetch(`${API_BASE_URL}/messages`, {

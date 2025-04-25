@@ -20,6 +20,15 @@ export const isLoading = ref(true);
  */
 export const isAuthenticated = computed(() => !!user.value && !user.value.expired);
 
+// Promise setup for initialization completion
+let resolveAuthReady;
+/**
+ * A promise that resolves when the initial authentication check is complete.
+ */
+export const authReady = new Promise(resolve => {
+  resolveAuthReady = resolve;
+});
+
 /**
  * OIDC Configuration fetched from environment variables.
  * Note: Vite requires environment variables to be prefixed with VITE_
@@ -58,7 +67,16 @@ Log.setLogger(console);
 userManager.events.addUserLoaded((loadedUser) => {
   console.log('User loaded:', { sub: loadedUser?.profile?.sub });
   user.value = loadedUser;
-  isLoading.value = false;
+  // If loading is still true, set it to false. This might happen if user is loaded
+  // very quickly before initializeAuth finishes its own check.
+  if (isLoading.value) {
+    isLoading.value = false;
+  }
+  // Ensure the authReady promise resolves if it hasn't already
+  if (resolveAuthReady) {
+      resolveAuthReady();
+      resolveAuthReady = null;
+  }
 });
 
 /**
@@ -67,7 +85,12 @@ userManager.events.addUserLoaded((loadedUser) => {
 userManager.events.addUserUnloaded(() => {
   console.log('User unloaded/logged out');
   user.value = null;
-  isLoading.value = false;
+  isLoading.value = false; // Ensure loading is false on logout
+  // Ensure the authReady promise resolves if it hasn't already (e.g., if logout happens during init)
+  if (resolveAuthReady) {
+      resolveAuthReady();
+      resolveAuthReady = null;
+  }
 });
 
 /**
@@ -135,12 +158,17 @@ export const handleCallback = async () => {
 };
 
 /**
- * Gets the current access token if the user is authenticated.
+ * Gets the current access token if the user is authenticated and the token is not expired.
  * @returns {Promise<string | null>} The access token or null.
  */
 export const getAccessToken = async () => {
   const currentUser = await userManager.getUser();
-  return currentUser?.access_token ?? null;
+  if (!currentUser || currentUser.expired) {
+    // If no user or user token is expired, return null
+    return null;
+  }
+  // Otherwise, return the valid access token
+  return currentUser.access_token;
 };
 
 /**
@@ -156,21 +184,31 @@ export const initializeAuth = async () => {
     try {
         const loadedUser = await userManager.getUser();
         if (loadedUser && !loadedUser.expired) {
-            console.log('User found in storage:', loadedUser);
-            user.value = loadedUser; // addUserLoaded event also fires
+            // Log only sub claim for security
+            console.log('User found in storage:', { sub: loadedUser?.profile?.sub });
+            user.value = loadedUser; // addUserLoaded event might also fire
         } else {
             console.log('No valid user found in storage.');
             if (loadedUser && loadedUser.expired) {
                 console.log('Stored user is expired.');
             }
             user.value = null;
-            await userManager.removeUser(); // Clean up potentially expired user state
+            // Clean up potentially expired user state only if a user object was found but expired
+            if (loadedUser) {
+                await userManager.removeUser();
+            }
         }
     } catch (error) {
         console.error("Error during auth initialization:", error);
         user.value = null;
     } finally {
         isLoading.value = false;
-        console.log('Auth initialization complete. isLoading:', isLoading.value, 'user:', user.value);
+        // Log only sub claim for security
+        console.log('Auth initialization complete. isLoading:', isLoading.value, 'user:', { sub: user.value?.profile?.sub });
+        // Resolve the promise to signal auth is ready
+        if (resolveAuthReady) {
+            resolveAuthReady();
+            resolveAuthReady = null; // Ensure it's only resolved once
+        }
     }
 };
