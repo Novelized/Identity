@@ -26,7 +26,12 @@ onMounted(async () => {
     router.push({ name: 'Home' });
   } catch (error) {
     console.error('Callback error:', error);
-    router.push({ name: 'Home' });
+    router.push({
+      name: 'Login',
+      query: {
+        error: 'Authentication failed. Please try again.'
+      }
+    });
   }
 });
 </script> 
