@@ -56,7 +56,7 @@ Log.setLogger(console);
  * @param {import('oidc-client-ts').User} loadedUser - The loaded user object.
  */
 userManager.events.addUserLoaded((loadedUser) => {
-  console.log('User loaded:', loadedUser);
+  console.log('User loaded:', { sub: loadedUser?.profile?.sub });
   user.value = loadedUser;
   isLoading.value = false;
 });
@@ -122,7 +122,7 @@ export const handleCallback = async () => {
   try {
     // Processes the response from the authorization server in the main window
     const userReturned = await userManager.signinRedirectCallback();
-    console.log('Callback processed, user:', userReturned);
+    console.log('Callback processed, user:', { sub: userReturned?.profile?.sub });
     // user.value = userReturned; // Already handled by addUserLoaded event
     isLoading.value = false;
     return userReturned;
