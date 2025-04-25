@@ -55,7 +55,12 @@ const userManager = new UserManager(settings);
 console.log(`[Auth] UserManager configured with Client ID: ${settings.client_id}`);
 
 // --- Logging ---
-Log.setLevel(Log.DEBUG);
+// Only set DEBUG level in development to avoid excessive logs in production
+if (import.meta.env.DEV) {
+  Log.setLevel(Log.DEBUG);
+} else {
+  Log.setLevel(Log.INFO); // Or Log.WARN / Log.ERROR for production
+}
 Log.setLogger(console);
 
 // --- Event Handlers ---
@@ -184,7 +189,7 @@ export const initializeAuth = async () => {
     try {
         const loadedUser = await userManager.getUser();
         if (loadedUser && !loadedUser.expired) {
-            // Log only sub claim for security
+            // 🔒 Log only sub claim for security
             console.log('User found in storage:', { sub: loadedUser?.profile?.sub });
             user.value = loadedUser; // addUserLoaded event might also fire
         } else {
