@@ -1,7 +1,7 @@
 import { createRouter, createWebHistory } from 'vue-router';
 import Home from '../components/Home.vue';
 import Callback from '../components/Callback.vue';
-import Secured from '../components/Secured.vue';
+import Secured from '../views/Secured.vue';
 import Login from '../views/Login.vue';
 import { isAuthenticated, isLoading } from '../auth'; // Removed initializeAuth import, not needed here
 
