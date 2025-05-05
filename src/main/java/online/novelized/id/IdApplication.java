@@ -36,8 +36,7 @@ public class IdApplication {
                         .clientId(clientId)
                         .clientAuthenticationMethod(ClientAuthenticationMethod.NONE)
                         .authorizationGrantType(AuthorizationGrantType.AUTHORIZATION_CODE)
-                        .authorizationGrantType(AuthorizationGrantType.REFRESH_TOKEN)
-                        .authorizationGrantType(AuthorizationGrantType.CLIENT_CREDENTIALS);
+                        .authorizationGrantType(AuthorizationGrantType.REFRESH_TOKEN);
 
                 clientProperties.getRedirectUris().forEach(builder::redirectUri);
 
