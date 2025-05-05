@@ -56,12 +56,19 @@ import java.security.KeyPairGenerator;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.security.config.http.SessionCreationPolicy;
+import online.novelized.id.config.CorsProperties;
 
 @Configuration
 @EnableWebSecurity
 public class SecurityConfig {
 
     private static final Logger log = LoggerFactory.getLogger(SecurityConfig.class);
+
+    private final CorsProperties corsProperties;
+
+    public SecurityConfig(CorsProperties corsProperties) {
+        this.corsProperties = corsProperties;
+    }
 
     // Inject the Base64 encoded PEM private key from environment variable
     @Value("${JWT_PRIVATE_KEY_BASE64_PEM:#{null}}") // Default to null if not set
@@ -110,7 +117,7 @@ public class SecurityConfig {
     public SecurityFilterChain apiSecurityFilterChain(HttpSecurity http) throws Exception {
         http
             // Match only API paths (adjust pattern as needed)
-            .securityMatcher("/messages", "/api/**") // Example: Match /messages and anything under /api/
+            .securityMatcher("/messages/**", "/api/**") // Changed /messages to /messages/**
             // Disable CSRF protection for stateless API requests authenticated via Bearer tokens
             .csrf(AbstractHttpConfigurer::disable)
             // Enable CORS globally for this chain
@@ -122,7 +129,6 @@ public class SecurityConfig {
                 .requestMatchers(HttpMethod.OPTIONS, "/messages", "/api/**").permitAll()
                 // Secure API endpoints like /messages - Require JWT with 'message.read' scope
                 .requestMatchers("/messages").hasAuthority("SCOPE_message.read") // Use hasAuthority for scope check
-                 // Add other API endpoint rules here if needed
                 .anyRequest().authenticated() // Secure all matched API requests
             )
             // Configure OAuth2 Resource Server support for validating JWTs
@@ -201,13 +207,11 @@ public class SecurityConfig {
      * Provides the source for JWT signing keys (JWKSource).
      *
      * Attempts to load an RSA private key from the 'JWT_PRIVATE_KEY_BASE64_PEM' environment variable.
-     * The key MUST be the Base64 encoded PKCS#8 representation of the private key
-     * (i.e., the content between '-----BEGIN PRIVATE KEY-----' and '-----END PRIVATE KEY-----',
-     * without the headers/footers themselves).
+     * The variable should contain the Base64 encoded, full PEM representation of the PKCS#8 private key
+     * (including the '-----BEGIN PRIVATE KEY-----' and '-----END PRIVATE KEY-----' markers).
      *
      * If the environment variable is NOT SET or empty, a temporary RSA key pair will be
-     * generated IN MEMORY for development convenience. THIS IS NOT SUITABLE FOR PRODUCTION
-     * as keys will be lost on restart, invalidating all existing JWTs.
+     * generated IN MEMORY for development convenience. THIS IS NOT SUITABLE FOR PRODUCTION.
      *
      * IMPORTANT: For production, ensure the JWT_PRIVATE_KEY_BASE64_PEM environment variable is securely set.
      *
@@ -258,19 +262,33 @@ public class SecurityConfig {
     }
 
     /**
-     * Parses a Base64 encoded PKCS#8 string into an RSAPrivateKey.
+     * Parses a Base64 encoded PEM string (PKCS#8 format, including headers/footers) into an RSAPrivateKey.
      *
-     * @param base64Pkcs8 The Base64 encoded PKCS#8 string (without PEM headers/footers).
+     * @param base64FullPem The Base64 encoded string of the full PEM file content.
      * @return The RSAPrivateKey instance.
      * @throws NoSuchAlgorithmException If RSA algorithm is not available.
      * @throws InvalidKeySpecException If the key spec is invalid.
-     * @throws IllegalArgumentException If Base64 decoding fails.
+     * @throws IllegalArgumentException If Base64 decoding fails or PEM format is incorrect.
      */
-    private static RSAPrivateKey parsePemPrivateKey(String base64Pkcs8) throws NoSuchAlgorithmException, InvalidKeySpecException, IllegalArgumentException {
-        // Decode the Base64 encoded PKCS#8 bytes directly
-        byte[] pkcs8EncodedBytes = Base64.getDecoder().decode(base64Pkcs8);
+    private static RSAPrivateKey parsePemPrivateKey(String base64FullPem) throws NoSuchAlgorithmException, InvalidKeySpecException, IllegalArgumentException {
+        // 1. Decode the outer Base64 to get the full PEM string
+        byte[] decodedPemBytes = Base64.getDecoder().decode(base64FullPem);
+        String pemContent = new String(decodedPemBytes).trim();
 
-        // Use the decoded bytes to create the key spec
+        // 2. Remove PEM headers/footers
+        String privateKeyContent = pemContent
+                .replace("-----BEGIN PRIVATE KEY-----", "")
+                .replace("-----END PRIVATE KEY-----", "")
+                .replaceAll("\\s", ""); // Remove all whitespace (newlines, spaces)
+
+        if (privateKeyContent.isEmpty()) {
+             throw new IllegalArgumentException("PEM content is empty after removing headers/footers.");
+        }
+
+        // 3. Decode the inner Base64 content to get the PKCS#8 bytes
+        byte[] pkcs8EncodedBytes = Base64.getDecoder().decode(privateKeyContent);
+
+        // 4. Use the decoded bytes to create the key spec
         PKCS8EncodedKeySpec keySpec = new PKCS8EncodedKeySpec(pkcs8EncodedBytes);
         KeyFactory keyFactory = KeyFactory.getInstance("RSA");
         PrivateKey key = keyFactory.generatePrivate(keySpec);
@@ -354,15 +372,16 @@ public class SecurityConfig {
     }
 
     /**
-     * Defines the CORS configuration source.
+     * Defines the CORS configuration source, using allowed origins from properties.
      *
      * @return CorsConfigurationSource bean.
      */
     @Bean
     CorsConfigurationSource corsConfigurationSource() {
         CorsConfiguration configuration = new CorsConfiguration();
-        // Allow requests from the frontend development server
-        configuration.setAllowedOrigins(Arrays.asList("http://localhost:5173"));
+        // Use allowed origins from configuration properties
+        log.info("Configuring CORS with allowed origins: {}", corsProperties.getAllowedOrigins());
+        configuration.setAllowedOrigins(corsProperties.getAllowedOrigins());
         // Allow common HTTP methods
         configuration.setAllowedMethods(Arrays.asList("GET", "POST", "PUT", "DELETE", "OPTIONS"));
         // Allow all headers
