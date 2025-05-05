@@ -51,10 +51,16 @@ import java.util.Arrays;
 import java.util.UUID;
 import java.security.interfaces.RSAPrivateKey;
 import java.security.interfaces.RSAPublicKey;
+import java.security.KeyPair;
+import java.security.KeyPairGenerator;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
 @Configuration
 @EnableWebSecurity
 public class SecurityConfig {
+
+    private static final Logger log = LoggerFactory.getLogger(SecurityConfig.class);
 
     // Inject the Base64 encoded PEM private key from environment variable
     @Value("${JWT_PRIVATE_KEY_BASE64_PEM:#{null}}") // Default to null if not set
@@ -169,65 +175,77 @@ public class SecurityConfig {
     /**
      * Provides the source for JWT signing keys (JWKSource).
      *
-     * Loads an RSA private key from the 'JWT_PRIVATE_KEY_BASE64_PEM' environment variable.
-     * The key MUST be Base64 encoded PEM format (PKCS#8).
-     * The public key is derived from the private key.
+     * Attempts to load an RSA private key from the 'JWT_PRIVATE_KEY_BASE64_PEM' environment variable.
+     * The key MUST be the Base64 encoded PKCS#8 representation of the private key
+     * (i.e., the content between '-----BEGIN PRIVATE KEY-----' and '-----END PRIVATE KEY-----',
+     * without the headers/footers themselves).
      *
-     * IMPORTANT: Ensure the JWT_PRIVATE_KEY_BASE64_PEM environment variable is securely set
-     *            in your deployment environment.
+     * If the environment variable is NOT SET or empty, a temporary RSA key pair will be
+     * generated IN MEMORY for development convenience. THIS IS NOT SUITABLE FOR PRODUCTION
+     * as keys will be lost on restart, invalidating all existing JWTs.
+     *
+     * IMPORTANT: For production, ensure the JWT_PRIVATE_KEY_BASE64_PEM environment variable is securely set.
      *
      * @return JWKSource containing the signing key.
-     * @throws IllegalStateException if the environment variable is missing or the key is invalid.
+     * @throws IllegalStateException if the environment variable is set but the key is invalid.
      */
     @Bean
     public JWKSource<SecurityContext> jwkSource() {
-        if (!StringUtils.hasText(jwtPrivateKeyBase64Pem)) {
-            throw new IllegalStateException("JWT_PRIVATE_KEY_BASE64_PEM environment variable not set. Cannot configure JWKSource.");
-        }
+        if (StringUtils.hasText(jwtPrivateKeyBase64Pem)) {
+            log.info("Attempting to load JWT signing key from JWT_PRIVATE_KEY_BASE64_PEM environment variable.");
+            try {
+                RSAPrivateKey privateKey = parsePemPrivateKey(jwtPrivateKeyBase64Pem);
+                RSAPublicKey publicKey = derivePublicKey(privateKey);
 
-        try {
-            RSAPrivateKey privateKey = parsePemPrivateKey(jwtPrivateKeyBase64Pem);
-            RSAPublicKey publicKey = derivePublicKey(privateKey);
+                RSAKey rsaKey = new RSAKey.Builder(publicKey)
+                        .privateKey(privateKey)
+                        .keyID(UUID.randomUUID().toString())
+                        .build();
 
-            RSAKey rsaKey = new RSAKey.Builder(publicKey)
-                    .privateKey(privateKey)
-                    .keyID(UUID.randomUUID().toString()) // Generate a key ID
-                    .build();
+                JWKSet jwkSet = new JWKSet(rsaKey);
+                log.info("Successfully loaded JWT signing key from environment variable.");
+                return (jwkSelector, securityContext) -> jwkSelector.select(jwkSet);
 
+            } catch (NoSuchAlgorithmException | InvalidKeySpecException e) {
+                log.error("Failed to parse RSA private key from environment variable JWT_PRIVATE_KEY_BASE64_PEM. Check format.", e);
+                throw new IllegalStateException("Failed to parse RSA private key from environment variable JWT_PRIVATE_KEY_BASE64_PEM", e);
+            } catch (IllegalArgumentException e) {
+                log.error("Invalid Base64 encoding for JWT_PRIVATE_KEY_BASE64_PEM environment variable.", e);
+                 throw new IllegalStateException("Invalid Base64 encoding for JWT_PRIVATE_KEY_BASE64_PEM", e);
+            } catch (Exception e) {
+                log.error("An unexpected error occurred while loading JWKSource from environment variable.", e);
+                throw new IllegalStateException("An unexpected error occurred while configuring JWKSource from environment variable", e);
+            }
+        } else {
+            // --- DEVELOPMENT ONLY FALLBACK: Generate RSA key in memory ---
+            log.warn("****** WARNING ******");
+            log.warn("JWT_PRIVATE_KEY_BASE64_PEM environment variable not set.");
+            log.warn("Generating temporary RSA signing keys for JWTs. DO NOT USE IN PRODUCTION.");
+            log.warn("Keys will be lost on application restart, invalidating existing tokens.");
+            log.warn("Set the JWT_PRIVATE_KEY_BASE64_PEM environment variable for persistent keys.");
+            log.warn("*********************");
+
+            RSAKey rsaKey = generateRsa();
             JWKSet jwkSet = new JWKSet(rsaKey);
             return (jwkSelector, securityContext) -> jwkSelector.select(jwkSet);
-
-        } catch (NoSuchAlgorithmException | InvalidKeySpecException e) {
-            throw new IllegalStateException("Failed to parse RSA private key from environment variable JWT_PRIVATE_KEY_BASE64_PEM", e);
-        } catch (IllegalArgumentException e) {
-             throw new IllegalStateException("Invalid Base64 encoding for JWT_PRIVATE_KEY_BASE64_PEM", e);
-        } catch (Exception e) {
-            throw new IllegalStateException("An unexpected error occurred while configuring JWKSource from environment variable", e);
+            // --- END DEVELOPMENT ONLY FALLBACK ---
         }
     }
 
     /**
-     * Parses a Base64 encoded PEM string (PKCS#8) into an RSAPrivateKey.
+     * Parses a Base64 encoded PKCS#8 string into an RSAPrivateKey.
      *
-     * @param base64Pem The Base64 encoded PEM string.
+     * @param base64Pkcs8 The Base64 encoded PKCS#8 string (without PEM headers/footers).
      * @return The RSAPrivateKey instance.
      * @throws NoSuchAlgorithmException If RSA algorithm is not available.
      * @throws InvalidKeySpecException If the key spec is invalid.
      * @throws IllegalArgumentException If Base64 decoding fails.
      */
-    private static RSAPrivateKey parsePemPrivateKey(String base64Pem) throws NoSuchAlgorithmException, InvalidKeySpecException, IllegalArgumentException {
-        byte[] decodedBytes = Base64.getDecoder().decode(base64Pem);
-        String pemContent = new String(decodedBytes).trim(); // Decode Base64 first
+    private static RSAPrivateKey parsePemPrivateKey(String base64Pkcs8) throws NoSuchAlgorithmException, InvalidKeySpecException, IllegalArgumentException {
+        // Decode the Base64 encoded PKCS#8 bytes directly
+        byte[] pkcs8EncodedBytes = Base64.getDecoder().decode(base64Pkcs8);
 
-        // Remove PEM headers/footers and newlines
-        String privateKeyPem = pemContent
-                .replace("-----BEGIN PRIVATE KEY-----", "")
-                .replace("-----END PRIVATE KEY-----", "")
-                .replaceAll("\\s", ""); // Remove all whitespace including newlines
-
-
-        byte[] pkcs8EncodedBytes = Base64.getDecoder().decode(privateKeyPem); // Decode the inner Base64 content
-
+        // Use the decoded bytes to create the key spec
         PKCS8EncodedKeySpec keySpec = new PKCS8EncodedKeySpec(pkcs8EncodedBytes);
         KeyFactory keyFactory = KeyFactory.getInstance("RSA");
         PrivateKey key = keyFactory.generatePrivate(keySpec);
@@ -260,6 +278,32 @@ public class SecurityConfig {
             throw new InvalidKeySpecException("Cannot derive public key from a non-CRT private key");
         }
     }
+
+    // --- Helper methods for DEVELOPMENT ONLY key generation ---
+    private static RSAKey generateRsa() {
+        KeyPair keyPair = generateRsaKey();
+        RSAPublicKey publicKey = (RSAPublicKey) keyPair.getPublic();
+        RSAPrivateKey privateKey = (RSAPrivateKey) keyPair.getPrivate();
+        return new RSAKey.Builder(publicKey)
+                .privateKey(privateKey)
+                .keyID(UUID.randomUUID().toString())
+                .build();
+    }
+
+    private static KeyPair generateRsaKey() {
+        KeyPair keyPair;
+        try {
+            KeyPairGenerator keyPairGenerator = KeyPairGenerator.getInstance("RSA");
+            keyPairGenerator.initialize(2048);
+            keyPair = keyPairGenerator.generateKeyPair();
+        } catch (Exception ex) {
+            // Log the exception for better debugging
+            log.error("Failed to generate RSA key pair for development fallback.", ex);
+            throw new IllegalStateException("Failed to generate RSA key pair", ex);
+        }
+        return keyPair;
+    }
+    // --- END Helper methods ---
 
     /**
      * Provides the settings for the authorization server
