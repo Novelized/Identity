@@ -55,6 +55,7 @@ import java.security.KeyPair;
 import java.security.KeyPairGenerator;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.security.config.http.SessionCreationPolicy;
 
 @Configuration
 @EnableWebSecurity
@@ -98,8 +99,7 @@ public class SecurityConfig {
     }
 
     /**
-     * Configures the default security filter chain for handling user authentication (e.g., login form)
-     * and API endpoints secured with OAuth2 tokens.
+     * Configures the security filter chain for stateless API endpoints secured with OAuth2 tokens.
      *
      * @param http HttpSecurity configuration object.
      * @return Configured SecurityFilterChain.
@@ -107,29 +107,54 @@ public class SecurityConfig {
      */
     @Bean
     @Order(2)
-    public SecurityFilterChain defaultSecurityFilterChain(HttpSecurity http) throws Exception {
+    public SecurityFilterChain apiSecurityFilterChain(HttpSecurity http) throws Exception {
         http
+            // Match only API paths (adjust pattern as needed)
+            .securityMatcher("/messages", "/api/**") // Example: Match /messages and anything under /api/
             // Disable CSRF protection for stateless API requests authenticated via Bearer tokens
             .csrf(AbstractHttpConfigurer::disable)
             // Enable CORS globally for this chain
             .cors(withDefaults())
-            // Stateless session management suitable for APIs
-            // .sessionManagement(session -> session.sessionCreationPolicy(SessionCreationPolicy.STATELESS))
+            // Enforce stateless session management for APIs
+            .sessionManagement(session -> session.sessionCreationPolicy(SessionCreationPolicy.STATELESS))
             .authorizeHttpRequests(authorize -> authorize
                 // Explicitly permit OPTIONS requests for CORS preflight
-                .requestMatchers(HttpMethod.OPTIONS, "/messages").permitAll()
-                // Allow unauthenticated access to static resources, login page, etc.
-                // .requestMatchers("/css/**", "/js/**", "/images/**", "/login", "/error").permitAll()
+                .requestMatchers(HttpMethod.OPTIONS, "/messages", "/api/**").permitAll()
                 // Secure API endpoints like /messages - Require JWT with 'message.read' scope
                 .requestMatchers("/messages").hasAuthority("SCOPE_message.read") // Use hasAuthority for scope check
-                // Secure all other requests with standard form login
-                .anyRequest().authenticated()
+                 // Add other API endpoint rules here if needed
+                .anyRequest().authenticated() // Secure all matched API requests
             )
             // Configure OAuth2 Resource Server support for validating JWTs
-            .oauth2ResourceServer(oauth2 -> oauth2.jwt(withDefaults()))
+            .oauth2ResourceServer(oauth2 -> oauth2.jwt(withDefaults()));
+
+        return http.build();
+    }
+
+    /**
+     * Configures the default security filter chain for handling user authentication (e.g., login form)
+     * and other browser-based interactions. CSRF protection is ENABLED for this chain.
+     *
+     * @param http HttpSecurity configuration object.
+     * @return Configured SecurityFilterChain.
+     * @throws Exception If configuration fails.
+     */
+    @Bean
+    @Order(3) // Lower precedence than API chain
+    public SecurityFilterChain formLoginSecurityFilterChain(HttpSecurity http) throws Exception {
+        http
+             // Enable CORS (consider if needed for form login/UI pages)
+            .cors(withDefaults())
+            // CSRF is enabled by default, protecting form login
+            .authorizeHttpRequests(authorize -> authorize
+                 // Allow unauthenticated access to static resources, login page, etc.
+                 // .requestMatchers("/css/**", "/js/**", "/images/**", "/login", "/error").permitAll()
+                // Secure all other requests (including those falling through from the API chain)
+                .anyRequest().authenticated()
+            )
             // Standard Form login for browser-based interaction
             .formLogin(withDefaults());
-
+            // Session management is stateful by default (good for form login)
 
         return http.build();
     }
